@@ -51,7 +51,7 @@ async def handle_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif text == "ℹ️ Biz haqimizda": await update.message.reply_text("Tulpor yemlari - sifatli mahsulotlar!")
 
-# --- TOVAR QO'SHISH (CONVERSATION) ---
+# --- TOVAR QO'SHISH ---
 async def add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
     await update.callback_query.message.reply_text("Tovar nomini kiriting:")
@@ -104,7 +104,7 @@ async def order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def get_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['qty'] = update.message.text
     kb = [[InlineKeyboardButton("✅ Savatga qo'shish", callback_data="add_to_cart")]]
-    await update.message.reply_text(f"Tanlangan: {update.message.text}. Savatga qo'shasizmi?", reply_markup=InlineKeyboardMarkup(kb))
+    await update.message.reply_text(f"Tanlandi: {update.message.text}. Savatga qo'shasizmi?", reply_markup=InlineKeyboardMarkup(kb))
     return ConversationHandler.END
 
 async def add_to_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -115,7 +115,7 @@ async def add_to_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.execute("INSERT INTO cart VALUES (?, ?, ?)", (query.from_user.id, item_id, qty))
     conn.commit()
     conn.close()
-    await query.answer("Savatga qo'shildi!")
+    await query.answer("✅ Savatga qo'shildi!")
     await query.message.edit_text("✅ Tovar savatga muvaffaqiyatli tushdi!")
 
 # --- O'CHIRISH ---
@@ -143,7 +143,6 @@ async def perform_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
 if __name__ == '__main__':
     app = ApplicationBuilder().token(TOKEN).build()
     
-    # Handlerlar
     add_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(add_start, pattern='add_item')],
         states={NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
@@ -166,6 +165,6 @@ if __name__ == '__main__':
     app.add_handler(CallbackQueryHandler(add_to_cart, pattern='add_to_cart'))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main))
     
-    print("Bot 24/7 rejimida ishlamoqda...")
+    print("Bot 24/7 ish rejimida...")
     app.run_polling()
   
