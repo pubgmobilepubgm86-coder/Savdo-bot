@@ -23,6 +23,7 @@ def init_db():
     c.execute('CREATE TABLE IF NOT EXISTS cart (user_id INTEGER, item_id INTEGER, quantity INTEGER)')
     c.execute('CREATE TABLE IF NOT EXISTS admins (user_id INTEGER UNIQUE)')
     c.execute('CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY)')
+    c.execute('CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, status TEXT)')
     c.execute("INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (MASTER_ADMIN,))
     conn.commit()
     conn.close()
@@ -70,16 +71,14 @@ async def handle_main_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn = sqlite3.connect(DB_NAME)
         cats = conn.execute("SELECT DISTINCT category FROM items").fetchall()
         conn.close()
-        if not cats:
-            await update.message.reply_text("Hozircha tovar yo'q." + get_footer("Katalog"))
+        if not cats: await update.message.reply_text("Hozircha tovar yo'q." + get_footer("Katalog"))
         else:
             kb = [[InlineKeyboardButton(c[0], callback_data=f"cat_{c[0]}")] for c in cats if c[0]]
             await update.message.reply_text("Kerakli guruhni tanlang:", reply_markup=InlineKeyboardMarkup(kb))
             
     elif text == "🛒 Savat":
         cart = get_cart_items(uid)
-        if not cart:
-            await update.message.reply_text("Savat bo'sh. Tovar tanlang!" + get_footer("Savat"))
+        if not cart: await update.message.reply_text("Savat bo'sh. Tovar tanlang!" + get_footer("Savat"))
         else:
             msg = "🛒 Savat tarkibi:\n\n"; total = 0
             for i_id, name, price, qty in cart:
@@ -96,7 +95,7 @@ async def handle_main_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "🛠 Admin Panel" and is_admin(uid):
         kb = [[InlineKeyboardButton("➕ Tovar qo'shish", callback_data='add_item'), InlineKeyboardButton("❌ Tovar o'chirish", callback_data='del_item')],
               [InlineKeyboardButton("👤 Admin qo'shish", callback_data='add_admin'), InlineKeyboardButton("📢 Barchaga xabar", callback_data='broadcast_start')],
-              [InlineKeyboardButton("📊 Statistika", callback_data='show_stats')]]
+              [InlineKeyboardButton("📊 Dastavka Loyihasi", callback_data='show_delivery_stats')]]
         await update.message.reply_text("🛠 Admin boshqaruv paneli:", reply_markup=InlineKeyboardMarkup(kb))
 
 async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -105,25 +104,20 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if data.startswith("cat_"):
         cat = data.replace("cat_", "")
-        conn = sqlite3.connect(DB_NAME)
-        items = conn.execute("SELECT id, name FROM items WHERE category=?", (cat,)).fetchall()
-        conn.close()
+        conn = sqlite3.connect(DB_NAME); items = conn.execute("SELECT id, name FROM items WHERE category=?", (cat,)).fetchall(); conn.close()
         kb = [[InlineKeyboardButton(i[1], callback_data=f"show_{i[0]}")] for i in items]
         await query.message.edit_text(f"📦 {cat} guruhidagi tovarlar:", reply_markup=InlineKeyboardMarkup(kb))
             
     elif data.startswith("show_"):
         item_id = int(data.replace("show_", ""))
-        conn = sqlite3.connect(DB_NAME)
-        item = conn.execute("SELECT name, price, image_id, description FROM items WHERE id=?", (item_id,)).fetchone()
-        conn.close()
+        conn = sqlite3.connect(DB_NAME); item = conn.execute("SELECT name, price, image_id, description FROM items WHERE id=?", (item_id,)).fetchone(); conn.close()
         if item:
             kb = [[InlineKeyboardButton("📥 Savatga qo'shish", callback_data=f"add_to_cart_{item_id}")]]
             await query.message.reply_photo(photo=item[2], caption=f"📌 Nomi: {item[0]}\n💰 Narxi: {item[1]:,.0f} so'm\n📝 Info: {item[3]}", reply_markup=InlineKeyboardMarkup(kb))
             
     elif data.startswith("add_to_cart_"):
         item_id = int(data.replace("add_to_cart_", ""))
-        conn = sqlite3.connect(DB_NAME)
-        exist = conn.execute("SELECT quantity FROM cart WHERE user_id=? AND item_id=?", (uid, item_id)).fetchone()
+        conn = sqlite3.connect(DB_NAME); exist = conn.execute("SELECT quantity FROM cart WHERE user_id=? AND item_id=?", (uid, item_id)).fetchone()
         if exist: conn.execute("UPDATE cart SET quantity = quantity + 1 WHERE user_id=? AND item_id=?", (uid, item_id))
         else: conn.execute("INSERT INTO cart (user_id, item_id, quantity) VALUES (?, ?, 1)", (uid, item_id))
         conn.commit(); conn.close()
@@ -132,10 +126,27 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "clear_cart":
         conn = sqlite3.connect(DB_NAME); conn.execute("DELETE FROM cart WHERE user_id=?", (uid,)); conn.commit(); conn.close()
         await query.message.edit_text("🗑 Savatingiz tozalandi!")
-    elif data == "show_stats":
-        if is_admin(uid):
-            conn = sqlite3.connect(DB_NAME); count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]; conn.close()
-            await query.message.reply_text(f"📊 Jami foydalanuvchilar: {count} ta.")
+        
+    elif data == "show_delivery_stats" and is_admin(uid):
+        conn = sqlite3.connect(DB_NAME)
+        total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        total_orders = conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
+        done_orders = conn.execute("SELECT COUNT(*) FROM orders WHERE status='Yetkazildi'").fetchone()[0]
+        pending_orders = conn.execute("SELECT COUNT(*) FROM orders WHERE status='Kutilmoqda'").fetchone()[0]
+        conn.close()
+        
+        msg = (f"📊 *TULPOR SAVDO MARKAZI STATISTIKASI*\n\n"
+               f"👤 Jami a'zolar: {total_users} ta\n"
+               f"🚚 Jami buyurtma berganlar: {total_orders} kishi\n"
+               f"✅ Yetkazib berilganlar: {done_orders} kishi\n"
+               f"⏳ Yetkazilishi kerak bo'lganlar: {pending_orders} kishi")
+        await query.message.reply_text(msg, parse_mode="Markdown")
+        
+    elif data.startswith("done_") and is_admin(uid):
+        order_id = int(data.split("_")[1])
+        conn = sqlite3.connect(DB_NAME); conn.execute("UPDATE orders SET status='Yetkazildi' WHERE id=?", (order_id,)); conn.commit(); conn.close()
+        await query.message.edit_text("✅ Buyurtma holati 'Yetkazildi' deb belgilandi!")
+        
     elif data == "del_item" and is_admin(uid):
         conn = sqlite3.connect(DB_NAME); items = conn.execute("SELECT id, name FROM items").fetchall(); conn.close()
         kb = [[InlineKeyboardButton(f"❌ {i[1]}", callback_data=f"del_{i[0]}")] for i in items]
@@ -174,12 +185,16 @@ async def get_checkout_phone(update, context):
     user = update.effective_user; cart = get_cart_items(user.id)
     if not cart: await update.message.reply_text("Savat bo'sh!"); return ConversationHandler.END
     
+    conn = sqlite3.connect(DB_NAME); cursor = conn.cursor()
+    cursor.execute("INSERT INTO orders (user_id, status) VALUES (?, 'Kutilmoqda')", (user.id,))
+    order_id = cursor.lastrowid; conn.commit(); conn.close()
+    
     c_info = ""; total = 0
     for i_id, name, price, qty in cart:
         total += price * qty; c_info += f"- {name} ({qty} ta) - {price*qty:,.0f} so'm\n"
         
-    msg = f"🔔 YANGI BUYURTMA!\nMijoz: {user.full_name}\nTel: {phone}\nID: {user.id}\nUsername: @{user.username if user.username else 'Yoq'}\n\n🛒 Savat:\n{c_info}\n💵 Jami: {total:,.0f} so'm"
-    kb = [[InlineKeyboardButton("📩 Javob qaytarish", callback_data=f"reply_{user.id}")]]
+    msg = f"🔔 YANGI BUYURTMA #{order_id}!\nMijoz: {user.full_name}\nTel: {phone}\nID: {user.id}\nUsername: @{user.username if user.username else 'Yoq'}\n\n🛒 Savat:\n{c_info}\n💵 Jami: {total:,.0f} so'm"
+    kb = [[InlineKeyboardButton("📩 Javob qaytarish", callback_data=f"reply_{user.id}"), InlineKeyboardButton("✅ Yetkazildi", callback_data=f"done_{order_id}")]]
     
     conn = sqlite3.connect(DB_NAME); adms = conn.execute("SELECT user_id FROM admins").fetchall(); conn.close()
     for adm in adms:
@@ -227,4 +242,4 @@ def main():
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__': main()
-    
+        
