@@ -15,14 +15,16 @@ ADMIN_ID = 8086545587
 def init_db():
     conn = sqlite3.connect('items.db')
     cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS items (name TEXT, price TEXT, image_id TEXT, description TEXT)''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS cart (user_id INTEGER, item_id INTEGER, quantity TEXT)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS items 
+                      (name TEXT, price TEXT, image_id TEXT, description TEXT, category TEXT)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS cart 
+                      (user_id INTEGER, item_id INTEGER, quantity TEXT)''')
     conn.commit()
     conn.close()
 
 init_db()
 
-NAME, PRICE, DESC, IMAGE, QUANTITY = range(5)
+CATEGORY, NAME, PRICE, DESC, IMAGE, QUANTITY = range(6)
 
 # Flask serveri (Render uchun)
 def run_flask():
@@ -31,41 +33,54 @@ def run_flask():
     def home(): return "Bot ishlayapti!"
     app_flask.run(host='0.0.0.0', port=10000)
 
-# Funksiyalar
+# --- ASOSIY ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [["TOVARLAR 🌐", "🛒 Savat"], ["🚚 Yetkazib berish", "ℹ️ Biz haqimizda"]]
     if update.effective_user.id == ADMIN_ID: kb.append(["🛠 Admin Panel"])
     await update.message.reply_text("Assalomu alaykum!", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
-async def handle_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_main(update, context):
     text = update.message.text
     if text == "TOVARLAR 🌐":
         conn = sqlite3.connect('items.db')
-        items = conn.execute("SELECT rowid, name FROM items").fetchall()
+        cats = conn.execute("SELECT DISTINCT category FROM items").fetchall()
         conn.close()
-        if not items: await update.message.reply_text("Hozircha tovarlar yo'q.")
+        if not cats: await update.message.reply_text("Hozircha tovarlar yo'q.")
         else:
-            kb = [[InlineKeyboardButton(i[1], callback_data=f"show_{i[0]}")] for i in items]
-            await update.message.reply_text("📦 Tovar tanlang:", reply_markup=InlineKeyboardMarkup(kb))
-    elif text == "🛒 Savat":
-        await show_cart(update, context)
+            kb = [[InlineKeyboardButton(c[0], callback_data=f"cat_{c[0]}")] for c in cats]
+            await update.message.reply_text("Guruhni tanlang:", reply_markup=InlineKeyboardMarkup(kb))
+    elif text == "🛒 Savat": await show_cart(update, context)
     elif text == "🛠 Admin Panel" and update.effective_user.id == ADMIN_ID:
-        kb = [[InlineKeyboardButton("➕ Tovar qo'shish", callback_data='add_item')],
-              [InlineKeyboardButton("➖ Tovar o'chirish", callback_data='del_item')]]
+        kb = [[InlineKeyboardButton("➕ Tovar qo'shish", callback_data='add_item')], [InlineKeyboardButton("➖ Tovar o'chirish", callback_data='del_item')]]
         await update.message.reply_text("Admin:", reply_markup=InlineKeyboardMarkup(kb))
 
-async def show_cart(update, context):
+# --- GURUHLAR BO'YICHA TOVARLAR ---
+async def show_cat(update, context):
+    query = update.callback_query
+    cat = query.data.split("_")[1]
     conn = sqlite3.connect('items.db')
-    cart = conn.execute("SELECT i.name, c.quantity FROM cart c JOIN items i ON c.item_id = i.rowid WHERE c.user_id = ?", (update.effective_user.id,)).fetchall()
+    items = conn.execute("SELECT rowid, name FROM items WHERE category = ?", (cat,)).fetchall()
     conn.close()
-    if not cart: await update.message.reply_text("🛒 Savat bo'sh.")
-    else:
-        text = "🛒 Savatingiz:\n" + "\n".join([f"{i[0]} - {i[1]}" for i in cart])
-        await update.message.reply_text(text)
+    kb = [[InlineKeyboardButton(i[1], callback_data=f"show_{i[0]}")] for i in items]
+    await query.message.edit_text(f"📦 {cat} guruhi:", reply_markup=InlineKeyboardMarkup(kb))
 
-# Tovar qo'shish jarayoni
+async def show_item(update, context):
+    item_id = update.callback_query.data.split("_")[1]
+    context.user_data['item_id'] = item_id
+    conn = sqlite3.connect('items.db')
+    item = conn.execute("SELECT * FROM items WHERE rowid = ?", (item_id,)).fetchone()
+    conn.close()
+    await update.callback_query.message.reply_photo(item[2], caption=f"📦 {item[0]}\n💰 Narxi: {item[1]}\n📝 {item[3]}", 
+                                                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛒 Buyurtma berish", callback_data=f"order_{item_id}")]]))
+
+# --- TOVAR QO'SHISH (GURUHLAR BILAN) ---
 async def add_start(update, context):
-    await update.callback_query.message.reply_text("Tovar nomini yozing:")
+    await update.callback_query.message.reply_text("Guruh nomini kiriting:")
+    return CATEGORY
+
+async def get_cat(update, context):
+    context.user_data['cat'] = update.message.text
+    await update.message.reply_text("Tovar nomini yozing:")
     return NAME
 
 async def get_name(update, context):
@@ -85,22 +100,22 @@ async def get_desc(update, context):
 
 async def get_image(update, context):
     conn = sqlite3.connect('items.db')
-    conn.execute("INSERT INTO items VALUES (?, ?, ?, ?)", (context.user_data['name'], context.user_data['price'], update.message.photo[-1].file_id, context.user_data['desc']))
+    conn.execute("INSERT INTO items VALUES (?, ?, ?, ?, ?)", (context.user_data['name'], context.user_data['price'], update.message.photo[-1].file_id, context.user_data['desc'], context.user_data['cat']))
     conn.commit()
     conn.close()
-    await update.message.reply_text("✅ Tovar qo'shildi!")
+    await update.message.reply_text("✅ Tovar muvaffaqiyatli qo'shildi!")
     return ConversationHandler.END
 
-# Buyurtma
-async def show_item(update, context):
-    item_id = update.callback_query.data.split("_")[1]
-    context.user_data['item_id'] = item_id
+# --- SAVAT VA BUYURTMA (QOLGAN FUNKSIYALAR) ---
+async def show_cart(update, context):
     conn = sqlite3.connect('items.db')
-    item = conn.execute("SELECT * FROM items WHERE rowid = ?", (item_id,)).fetchone()
+    cart = conn.execute("SELECT i.name, c.quantity FROM cart c JOIN items i ON c.item_id = i.rowid WHERE c.user_id = ?", (update.effective_user.id,)).fetchall()
     conn.close()
-    await update.callback_query.message.reply_photo(item[2], caption=f"{item[0]}\nNarxi: {item[1]}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛒 Buyurtma berish", callback_data=f"order_{item_id}")]]))
+    text = "🛒 Savat:\n" + "\n".join([f"{i[0]} - {i[1]}" for i in cart]) if cart else "Savat bo'sh."
+    await update.message.reply_text(text)
 
 async def order_start(update, context):
+    context.user_data['item_id'] = update.callback_query.data.split("_")[1]
     await update.callback_query.message.reply_text("Nechta kerak?")
     return QUANTITY
 
@@ -118,8 +133,9 @@ if __name__ == '__main__':
     
     app.add_handler(ConversationHandler(
         entry_points=[CallbackQueryHandler(add_start, pattern='add_item')],
-        states={NAME: [MessageHandler(filters.TEXT, get_name)], PRICE: [MessageHandler(filters.TEXT, get_price)],
-                DESC: [MessageHandler(filters.TEXT, get_desc)], IMAGE: [MessageHandler(filters.PHOTO, get_image)]},
+        states={CATEGORY: [MessageHandler(filters.TEXT, get_cat)], NAME: [MessageHandler(filters.TEXT, get_name)], 
+                PRICE: [MessageHandler(filters.TEXT, get_price)], DESC: [MessageHandler(filters.TEXT, get_desc)], 
+                IMAGE: [MessageHandler(filters.PHOTO, get_image)]},
         fallbacks=[CommandHandler("start", start)]))
 
     app.add_handler(ConversationHandler(
@@ -127,8 +143,9 @@ if __name__ == '__main__':
         states={QUANTITY: [MessageHandler(filters.TEXT, get_quantity)]},
         fallbacks=[CommandHandler("start", start)]))
 
+    app.add_handler(CallbackQueryHandler(show_cat, pattern=r'^cat_'))
     app.add_handler(CallbackQueryHandler(show_item, pattern=r'^show_\d+$'))
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT, handle_main))
     app.run_polling()
-      
+  
