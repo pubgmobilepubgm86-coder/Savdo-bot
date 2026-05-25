@@ -32,7 +32,8 @@ def run_flask():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [["TOVARLAR 🌐", "🛒 Savat"], ["🚚 Yetkazib berish", "ℹ️ Biz haqimizda"]]
     if update.effective_user.id == ADMIN_ID: kb.append(["🛠 Admin Panel"])
-    await update.message.reply_text("Assalomu alaykum!", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+    await update.message.reply_text("Assalomu alaykum! Tulpor yemlari botiga xush kelibsiz.", 
+                                    reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
 async def handle_main(update, context):
     text = update.message.text
@@ -45,28 +46,32 @@ async def handle_main(update, context):
             kb = [[InlineKeyboardButton(c[0], callback_data=f"cat_{c[0]}")] for c in cats]
             await update.message.reply_text("Guruhni tanlang:", reply_markup=InlineKeyboardMarkup(kb))
     elif text == "🛒 Savat": await show_cart(update, context)
+    elif text == "🚚 Yetkazib berish": await update.message.reply_text("🚚 Chortoq bo'ylab yetkazib berish xizmatimiz mavjud.")
+    elif text == "ℹ️ Biz haqimizda": await update.message.reply_text("Tulpor yemlari - biz sifatli va arzon mahsulotlarni yetkazib beramiz. Mijozlarimiz ishonchi - bizning maqsadimiz!")
     elif text == "🛠 Admin Panel" and update.effective_user.id == ADMIN_ID:
         kb = [[InlineKeyboardButton("➕ Tovar qo'shish", callback_data='add_item')], [InlineKeyboardButton("➖ Tovar o'chirish", callback_data='del_item')]]
-        await update.message.reply_text("Admin:", reply_markup=InlineKeyboardMarkup(kb))
+        await update.message.reply_text("Admin boshqaruvi:", reply_markup=InlineKeyboardMarkup(kb))
 
-# Tovar qo'shish (Guruh tanlash bilan)
+# Tovar qo'shish - yangilangan (ravon ishlashi uchun)
 async def add_start(update, context):
+    query = update.callback_query
+    await query.answer()
     conn = sqlite3.connect('items.db')
     cats = conn.execute("SELECT DISTINCT category FROM items").fetchall()
     conn.close()
     kb = [[InlineKeyboardButton(c[0], callback_data=f"selcat_{c[0]}")] for c in cats]
     kb.append([InlineKeyboardButton("➕ Yangi guruh", callback_data="new_cat")])
-    await update.callback_query.message.reply_text("Guruhni tanlang:", reply_markup=InlineKeyboardMarkup(kb))
+    await query.message.reply_text("Guruhni tanlang yoki yangisini yarating:", reply_markup=InlineKeyboardMarkup(kb))
     return CATEGORY
 
 async def select_cat(update, context):
     query = update.callback_query
     await query.answer()
     if query.data == "new_cat":
-        await query.message.reply_text("Yangi guruh nomini yozing:")
+        await query.message.edit_text("Yangi guruh nomini yozing:")
     else:
         context.user_data['cat'] = query.data.split("_")[1]
-        await query.message.reply_text("Tovar nomini yozing:")
+        await query.message.edit_text(f"Tanlandi: {context.user_data['cat']}. Tovar nomini yozing:")
         return NAME
     return CATEGORY
 
@@ -87,7 +92,7 @@ async def get_price(update, context):
 
 async def get_desc(update, context):
     context.user_data['desc'] = update.message.text
-    await update.message.reply_text("Rasmni yuboring:")
+    await update.message.reply_text("Endi rasmni yuboring:")
     return IMAGE
 
 async def get_image(update, context):
@@ -95,24 +100,27 @@ async def get_image(update, context):
     conn.execute("INSERT INTO items VALUES (?, ?, ?, ?, ?)", (context.user_data['name'], context.user_data['price'], update.message.photo[-1].file_id, context.user_data['desc'], context.user_data['cat']))
     conn.commit()
     conn.close()
-    await update.message.reply_text("✅ Tovar qo'shildi!")
+    await update.message.reply_text("✅ Tovar muvaffaqiyatli qo'shildi!")
     return ConversationHandler.END
 
 async def show_cat(update, context):
-    cat = update.callback_query.data.split("_")[1]
+    query = update.callback_query
+    cat = query.data.split("_")[1]
     conn = sqlite3.connect('items.db')
     items = conn.execute("SELECT rowid, name FROM items WHERE category = ?", (cat,)).fetchall()
     conn.close()
     kb = [[InlineKeyboardButton(i[1], callback_data=f"show_{i[0]}")] for i in items]
-    await update.callback_query.message.edit_text(f"📦 {cat} guruhi:", reply_markup=InlineKeyboardMarkup(kb))
+    await query.message.edit_text(f"📦 {cat} guruhi:", reply_markup=InlineKeyboardMarkup(kb))
 
 async def show_item(update, context):
-    item_id = update.callback_query.data.split("_")[1]
+    query = update.callback_query
+    item_id = query.data.split("_")[1]
     context.user_data['item_id'] = item_id
     conn = sqlite3.connect('items.db')
     item = conn.execute("SELECT * FROM items WHERE rowid = ?", (item_id,)).fetchone()
     conn.close()
-    await update.callback_query.message.reply_photo(item[2], caption=f"📦 {item[0]}\n💰 Narxi: {item[1]}\n📝 {item[3]}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛒 Buyurtma berish", callback_data=f"order_{item_id}")]]))
+    await query.message.reply_photo(item[2], caption=f"📦 {item[0]}\n💰 Narxi: {item[1]}\n📝 {item[3]}", 
+                                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛒 Buyurtma berish", callback_data=f"order_{item_id}")]]))
 
 async def show_cart(update, context):
     conn = sqlite3.connect('items.db')
@@ -161,4 +169,4 @@ if __name__ == '__main__':
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT, handle_main))
     app.run_polling()
-  
+      
