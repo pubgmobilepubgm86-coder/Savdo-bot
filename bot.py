@@ -28,7 +28,7 @@ init_db()
 # Bosqichlar
 NAME, PRICE, DESC, IMAGE, QUANTITY = range(5)
 
-# --- FLASK SERVER (RENDER BEPUL ISHLASHI UCHUN) ---
+# --- FLASK SERVER (RENDER UCHUN) ---
 app_flask = Flask(__name__)
 @app_flask.route('/')
 def home():
@@ -37,7 +37,7 @@ def home():
 def run_flask():
     app_flask.run(host='0.0.0.0', port=10000)
 
-# --- ASOSIY FUNKSIYALAR ---
+# --- FUNKSIYALAR ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [["TOVARLAR 🌐", "🛒 Savat"], ["🚚 Yetkazib berish", "ℹ️ Biz haqimizda"]]
     if update.effective_user.id == ADMIN_ID: kb.append(["🛠 Admin Panel"])
@@ -74,7 +74,6 @@ async def show_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += f"{idx}. {item[0]} — *{item[1]}*\n"
         await update.message.reply_text(text, parse_mode='Markdown')
 
-# --- TOVAR QO'SHISH VA BUYURTMA ---
 async def add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
     await update.callback_query.message.reply_text("Tovar nomini kiriting:")
@@ -160,7 +159,7 @@ async def perform_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.message.edit_text("✅ Tovar o'chirildi.")
 
 if __name__ == '__main__':
-    Thread(target=run_flask).start() # Serverni fon rejimida yoqamiz
+    Thread(target=run_flask).start()
     app = ApplicationBuilder().token(TOKEN).build()
     
     add_conv = ConversationHandler(
