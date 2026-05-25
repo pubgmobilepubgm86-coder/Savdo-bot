@@ -7,10 +7,10 @@ from telegram.ext import (ApplicationBuilder, CommandHandler, MessageHandler,
 # Loglarni sozlash
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-TOKEN = "8849139822:AAGMl30M3Xm-IOxiWE6n8BS8NVOQyfhACGw"
+TOKEN = "8849139822:AAEOia8xieoZ9kfUZjKadw7z6JcQ0cSZ1oY"
 ADMIN_ID = 8086545587
 
-# Ma'lumotlar bazasini initsializatsiya qilish
+# Ma'lumotlar bazasi
 def init_db():
     conn = sqlite3.connect('items.db')
     cursor = conn.cursor()
@@ -103,7 +103,7 @@ async def get_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Tovar muvaffaqiyatli qo'shildi!")
     return ConversationHandler.END
 
-# --- BUYURTMA VA SAVAT ---
+# --- BUYURTMA VA SAVATGA QO'SHISH ---
 async def show_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -186,6 +186,6 @@ if __name__ == '__main__':
     app.add_handler(CallbackQueryHandler(add_to_cart, pattern='add_to_cart'))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main))
     
-    print("Bot 24/7 ish rejimida...")
+    print("Bot ishlamoqda...")
     app.run_polling()
   
