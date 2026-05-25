@@ -10,7 +10,7 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 TOKEN = "8849139822:AAGMl30M3Xm-IOxiWE6n8BS8NVOQyfhACGw"
 ADMIN_ID = 8086545587
 
-# Ma'lumotlar bazasi
+# Ma'lumotlar bazasini initsializatsiya qilish
 def init_db():
     conn = sqlite3.connect('items.db')
     cursor = conn.cursor()
@@ -44,12 +44,33 @@ async def handle_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
             kb = [[InlineKeyboardButton(i[1], callback_data=f"show_{i[0]}")] for i in items]
             await update.message.reply_text("📦 *Bizning tovarlar:*", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
     
+    elif text == "🛒 Savat":
+        await show_cart(update, context)
+        
     elif text == "🛠 Admin Panel" and update.effective_user.id == ADMIN_ID:
         kb = [[InlineKeyboardButton("➕ Tovar qo'shish", callback_data='add_item'),
                InlineKeyboardButton("➖ Tovar o'chirish", callback_data='del_item')]]
         await update.message.reply_text("Admin boshqaruv paneli:", reply_markup=InlineKeyboardMarkup(kb))
     
     elif text == "ℹ️ Biz haqimizda": await update.message.reply_text("Tulpor yemlari - sifatli mahsulotlar!")
+
+# --- SAVATNI KO'RSATISH ---
+async def show_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    conn = sqlite3.connect('items.db')
+    cart_items = conn.execute("""
+        SELECT i.name, c.quantity 
+        FROM cart c 
+        JOIN items i ON c.item_id = i.rowid 
+        WHERE c.user_id = ?""", (user_id,)).fetchall()
+    conn.close()
+    
+    if not cart_items: await update.message.reply_text("🛒 Savatingiz bo'sh.")
+    else:
+        text = "🛒 *Sizning savatingiz:*\n\n"
+        for idx, item in enumerate(cart_items, 1):
+            text += f"{idx}. {item[0]} — *{item[1]}*\n"
+        await update.message.reply_text(text, parse_mode='Markdown')
 
 # --- TOVAR QO'SHISH ---
 async def add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
