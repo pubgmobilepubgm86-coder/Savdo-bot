@@ -9,7 +9,7 @@ from threading import Thread
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 TOKEN = "8849139822:AAEOia8xieoZ9kfUZjKadw7z6JcQ0cSZ1oY"
-ADMIN_ID = 8086545587
+ADMIN_IDS = [8086545587, 5829527078]
 
 def init_db():
     conn = sqlite3.connect('items.db')
@@ -21,7 +21,7 @@ def init_db():
 
 init_db()
 
-CATEGORY, NAME, PRICE, DESC, IMAGE, QUANTITY = range(6)
+CATEGORY, NAME, PRICE, DESC, IMAGE, QUANTITY, PHONE = range(7)
 
 def run_flask():
     app_flask = Flask(__name__)
@@ -31,8 +31,9 @@ def run_flask():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [["TOVARLAR 🌐", "🛒 Savat"], ["🚚 Yetkazib berish", "ℹ️ Biz haqimizda"]]
-    if update.effective_user.id == ADMIN_ID: kb.append(["🛠 Admin Panel"])
-    await update.message.reply_text("Assalomu alaykum! Tulpor yemlari botiga xush kelibsiz.", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+    if update.effective_user.id in ADMIN_IDS: kb.append(["🛠 Admin Panel"])
+    await update.message.reply_text("Assalomu alaykum! Tulpor yemlari botiga xush kelibsiz.", 
+                                    reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
 async def handle_main(update, context):
     text = update.message.text
@@ -47,11 +48,11 @@ async def handle_main(update, context):
     elif text == "🛒 Savat": await show_cart(update, context)
     elif text == "🚚 Yetkazib berish": await update.message.reply_text("🚚 Chortoq bo'ylab yetkazib berish xizmatimiz mavjud.")
     elif text == "ℹ️ Biz haqimizda": await update.message.reply_text("Tulpor yemlari - biz sifatli va arzon mahsulotlarni yetkazib beramiz. Mijozlarimiz ishonchi - bizning maqsadimiz!")
-    elif text == "🛠 Admin Panel" and update.effective_user.id == ADMIN_ID:
+    elif text == "🛠 Admin Panel" and update.effective_user.id in ADMIN_IDS:
         kb = [[InlineKeyboardButton("➕ Tovar qo'shish", callback_data='add_item')], [InlineKeyboardButton("➖ Tovar o'chirish", callback_data='del_item')]]
         await update.message.reply_text("Admin boshqaruvi:", reply_markup=InlineKeyboardMarkup(kb))
 
-# Tovar qo'shish jarayoni
+# --- TOVAR QO'SHISH ---
 async def add_start(update, context):
     query = update.callback_query
     await query.answer()
@@ -60,7 +61,7 @@ async def add_start(update, context):
     conn.close()
     kb = [[InlineKeyboardButton(c[0], callback_data=f"selcat_{c[0]}")] for c in cats]
     kb.append([InlineKeyboardButton("➕ Yangi guruh", callback_data="new_cat")])
-    await query.message.edit_text("Guruhni tanlang yoki yangisini yarating:", reply_markup=InlineKeyboardMarkup(kb))
+    await query.message.edit_text("Guruhni tanlang:", reply_markup=InlineKeyboardMarkup(kb))
     return CATEGORY
 
 async def select_cat(update, context):
@@ -101,33 +102,35 @@ async def get_image(update, context):
     await update.message.reply_text("✅ Tovar qo'shildi!")
     return ConversationHandler.END
 
-# Savat va o'chirish
+# --- SAVAT VA BUYURTMA ---
 async def show_cart(update, context):
     conn = sqlite3.connect('items.db')
     cart = conn.execute("SELECT i.name, c.quantity FROM cart c JOIN items i ON c.item_id = i.rowid WHERE c.user_id = ?", (update.effective_user.id,)).fetchall()
     conn.close()
-    text = "🛒 Savatingiz:\n" + "\n".join([f"{i[0]} - {i[1]}" for i in cart]) if cart else "Savat bo'sh."
-    await update.message.reply_text(text)
+    if not cart: await update.message.reply_text("🛒 Savatingiz bo'sh.")
+    else:
+        text = "🛒 *Sizning savatingiz:*\n" + "\n".join([f"• {i[0]} — {i[1]}" for i in cart])
+        kb = [[InlineKeyboardButton("✅ Rasmiylashtirish", callback_data="checkout")]]
+        await update.message.reply_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
 
-async def del_item_menu(update, context):
-    query = update.callback_query
-    await query.answer()
+async def checkout_start(update, context):
+    await update.callback_query.message.reply_text("📞 Telefon raqamingizni qoldiring:")
+    return PHONE
+
+async def get_phone(update, context):
+    phone = update.message.text
+    user = update.effective_user
     conn = sqlite3.connect('items.db')
-    items = conn.execute("SELECT rowid, name FROM items").fetchall()
+    cart = conn.execute("SELECT i.name, c.quantity FROM cart c JOIN items i ON c.item_id = i.rowid WHERE c.user_id = ?", (user.id,)).fetchall()
     conn.close()
-    kb = [[InlineKeyboardButton(f"❌ {i[1]}", callback_data=f"del_{i[0]}")] for i in items]
-    await query.message.reply_text("O'chirish uchun tovarni tanlang:", reply_markup=InlineKeyboardMarkup(kb))
+    order_details = "\n".join([f"• {i[0]} — {i[1]}" for i in cart])
+    msg = f"🆕 *Yangi buyurtma!*\n👤 Mijoz: {user.full_name}\n📞 Raqam: {phone}\n📦 Tovar:\n{order_details}"
+    for admin_id in ADMIN_IDS:
+        await context.bot.send_message(chat_id=admin_id, text=msg, parse_mode='Markdown')
+    await update.message.reply_text("✅ Barcha ma'lumotlar yuborildi. Javobni kuting!")
+    return ConversationHandler.END
 
-async def perform_delete(update, context):
-    query = update.callback_query
-    item_id = query.data.split("_")[1]
-    conn = sqlite3.connect('items.db')
-    conn.execute("DELETE FROM items WHERE rowid = ?", (item_id,))
-    conn.commit()
-    conn.close()
-    await query.answer("O'chirildi!")
-    await query.message.edit_text("✅ Tovar o'chirildi.")
-
+# --- YORDAMCHI FUNKSIYALAR ---
 async def show_cat(update, context):
     cat = update.callback_query.data.split("_")[1]
     conn = sqlite3.connect('items.db')
@@ -138,12 +141,26 @@ async def show_cat(update, context):
 
 async def show_item(update, context):
     item_id = update.callback_query.data.split("_")[1]
-    context.user_data['item_id'] = item_id
     conn = sqlite3.connect('items.db')
     item = conn.execute("SELECT * FROM items WHERE rowid = ?", (item_id,)).fetchone()
     conn.close()
     await update.callback_query.message.reply_photo(item[2], caption=f"📦 {item[0]}\n💰 Narxi: {item[1]}\n📝 {item[3]}", 
                                                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛒 Buyurtma berish", callback_data=f"order_{item_id}")]]))
+
+async def del_item_menu(update, context):
+    conn = sqlite3.connect('items.db')
+    items = conn.execute("SELECT rowid, name FROM items").fetchall()
+    conn.close()
+    kb = [[InlineKeyboardButton(f"❌ {i[1]}", callback_data=f"del_{i[0]}")] for i in items]
+    await update.callback_query.message.reply_text("O'chirish uchun tovarni tanlang:", reply_markup=InlineKeyboardMarkup(kb))
+
+async def perform_delete(update, context):
+    item_id = update.callback_query.data.split("_")[1]
+    conn = sqlite3.connect('items.db')
+    conn.execute("DELETE FROM items WHERE rowid = ?", (item_id,))
+    conn.commit()
+    conn.close()
+    await update.callback_query.message.edit_text("✅ Tovar o'chirildi.")
 
 async def order_start(update, context):
     context.user_data['item_id'] = update.callback_query.data.split("_")[1]
@@ -158,6 +175,7 @@ async def get_quantity(update, context):
     await update.message.reply_text("✅ Savatga qo'shildi!")
     return ConversationHandler.END
 
+# --- MAIN ---
 if __name__ == '__main__':
     Thread(target=run_flask).start()
     app = ApplicationBuilder().token(TOKEN).build()
@@ -178,8 +196,14 @@ if __name__ == '__main__':
         states={QUANTITY: [MessageHandler(filters.TEXT, get_quantity)]},
         fallbacks=[CommandHandler("start", start)])
 
+    checkout_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(checkout_start, pattern='checkout')],
+        states={PHONE: [MessageHandler(filters.TEXT, get_phone)]},
+        fallbacks=[CommandHandler("start", start)])
+
     app.add_handler(add_conv)
     app.add_handler(order_conv)
+    app.add_handler(checkout_conv)
     app.add_handler(CallbackQueryHandler(del_item_menu, pattern='del_item'))
     app.add_handler(CallbackQueryHandler(perform_delete, pattern=r'^del_\d+$'))
     app.add_handler(CallbackQueryHandler(show_cat, pattern=r'^cat_'))
@@ -187,3 +211,4 @@ if __name__ == '__main__':
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT, handle_main))
     app.run_polling()
+  
