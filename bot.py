@@ -14,18 +14,19 @@ ADMIN_ID = 8086545587
 def init_db():
     conn = sqlite3.connect('items.db')
     cursor = conn.cursor()
-    # 4 ta ustun: name, price, image_id, desc
     cursor.execute('''CREATE TABLE IF NOT EXISTS items 
                       (name TEXT, price TEXT, image_id TEXT, description TEXT)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS cart 
+                      (user_id INTEGER, item_id INTEGER, quantity TEXT)''')
     conn.commit()
     conn.close()
 
 init_db()
 
 # Bosqichlar
-NAME, PRICE, DESC, IMAGE = range(4)
+NAME, PRICE, DESC, IMAGE, QUANTITY = range(5)
 
-# --- FUNKSIYALAR ---
+# --- ASOSIY FUNKSIYALAR ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [["TOVARLAR 🌐", "🛒 Savat"], ["🚚 Yetkazib berish", "ℹ️ Biz haqimizda"]]
     if update.effective_user.id == ADMIN_ID: kb.append(["🛠 Admin Panel"])
@@ -81,7 +82,43 @@ async def get_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Tovar muvaffaqiyatli qo'shildi!")
     return ConversationHandler.END
 
-# --- O'CHIRISH VA KO'RSATISH ---
+# --- BUYURTMA VA SAVAT ---
+async def show_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    item_id = query.data.split("_")[1]
+    context.user_data['item_id'] = item_id
+    conn = sqlite3.connect('items.db')
+    item = conn.execute("SELECT * FROM items WHERE rowid = ?", (item_id,)).fetchone()
+    conn.close()
+    kb = [[InlineKeyboardButton("🛒 Buyurtma berish", callback_data=f"order_{item_id}")]]
+    await query.message.reply_photo(photo=item[2], caption=f"📦 Nomi: {item[0]}\n💰 Narxi: {item[1]}\n📝 {item[3]}", 
+                                    reply_markup=InlineKeyboardMarkup(kb))
+
+async def order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text("Nechta yoki necha kg kerak:")
+    return QUANTITY
+
+async def get_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['qty'] = update.message.text
+    kb = [[InlineKeyboardButton("✅ Savatga qo'shish", callback_data="add_to_cart")]]
+    await update.message.reply_text(f"Tanlangan: {update.message.text}. Savatga qo'shasizmi?", reply_markup=InlineKeyboardMarkup(kb))
+    return ConversationHandler.END
+
+async def add_to_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    item_id = context.user_data.get('item_id')
+    qty = context.user_data.get('qty')
+    conn = sqlite3.connect('items.db')
+    conn.execute("INSERT INTO cart VALUES (?, ?, ?)", (query.from_user.id, item_id, qty))
+    conn.commit()
+    conn.close()
+    await query.answer("Savatga qo'shildi!")
+    await query.message.edit_text("✅ Tovar savatga muvaffaqiyatli tushdi!")
+
+# --- O'CHIRISH ---
 async def delete_item_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -103,35 +140,32 @@ async def perform_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer("Tovar o'chirildi!")
     await query.message.edit_text("✅ Tovar o'chirildi.")
 
-async def show_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    item_id = query.data.split("_")[1]
-    conn = sqlite3.connect('items.db')
-    item = conn.execute("SELECT * FROM items WHERE rowid = ?", (item_id,)).fetchone()
-    conn.close()
-    await query.message.reply_photo(photo=item[2], caption=f"📦 Nomi: {item[0]}\n💰 Narxi: {item[1]} so'm\n📝 Tavsif: {item[3]}")
-
 if __name__ == '__main__':
     app = ApplicationBuilder().token(TOKEN).build()
     
-    conv = ConversationHandler(
+    # Handlerlar
+    add_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(add_start, pattern='add_item')],
-        states={
-            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
-            PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_price)],
-            DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_desc)],
-            IMAGE: [MessageHandler(filters.PHOTO, get_image)]
-        },
-        fallbacks=[CommandHandler("start", start)]
-    )
-    
+        states={NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
+                PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_price)],
+                DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_desc)],
+                IMAGE: [MessageHandler(filters.PHOTO, get_image)]},
+        fallbacks=[CommandHandler("start", start)])
+
+    order_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(order_start, pattern=r'^order_\d+$')],
+        states={QUANTITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_quantity)]},
+        fallbacks=[CommandHandler("start", start)])
+
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(conv)
+    app.add_handler(add_conv)
+    app.add_handler(order_conv)
     app.add_handler(CallbackQueryHandler(delete_item_menu, pattern='del_item'))
     app.add_handler(CallbackQueryHandler(perform_delete, pattern=r'^del_\d+$'))
     app.add_handler(CallbackQueryHandler(show_item, pattern=r'^show_\d+$'))
+    app.add_handler(CallbackQueryHandler(add_to_cart, pattern='add_to_cart'))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main))
     
-    print("Bot ishlamoqda...")
+    print("Bot 24/7 rejimida ishlamoqda...")
     app.run_polling()
+  
