@@ -50,7 +50,7 @@ def get_footer(section):
 def run_flask():
     app = Flask(__name__)
     @app.route('/')
-    def home(): return "Tulpor Yemlari Onlayn!"
+    def home(): return "Tulpor Savdo Markazi Aktiv!"
     app.run(host='0.0.0.0', port=10000)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -61,7 +61,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     kb = [["TOVARLAR 🌐", "🛒 Savat"], ["🚚 Yetkazib berish", "ℹ️ Biz haqimizda"]]
     if is_admin(uid): kb.append(["🛠 Admin Panel"])
-    await update.message.reply_text(f"Assalomu alaykum, {update.effective_user.first_name}! Tulpor yemlari botiga xush kelibsiz." + get_footer("Bosh sahifa"), reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+    await update.message.reply_text(f"Assalomu alaykum, {update.effective_user.first_name}! Tulpor savdo markazi botiga xush kelibsiz." + get_footer("Bosh sahifa"), reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
 async def handle_main_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text, uid = update.message.text, update.effective_user.id
@@ -92,7 +92,7 @@ async def handle_main_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "🚚 Yetkazib berish":
         await update.message.reply_text("Bizlar chortoq boʻyicha dastafka xizmatimiz bor\n+998930423150" + get_footer("Dastavka"))
     elif text == "ℹ️ Biz haqimizda":
-        await update.message.reply_text("Tulpor yemlari - sifatli mahsulotlar lidersi!" + get_footer("Biz haqimizda"))
+        await update.message.reply_text("Tulpor savdo markazi - sifatli mahsulotlar lidersi!" + get_footer("Biz haqimizda"))
     elif text == "🛠 Admin Panel" and is_admin(uid):
         kb = [[InlineKeyboardButton("➕ Tovar qo'shish", callback_data='add_item'), InlineKeyboardButton("❌ Tovar o'chirish", callback_data='del_item')],
               [InlineKeyboardButton("👤 Admin qo'shish", callback_data='add_admin'), InlineKeyboardButton("📢 Barchaga xabar", callback_data='broadcast_start')],
@@ -204,7 +204,7 @@ async def send_broadcast(update, context):
     conn = sqlite3.connect(DB_NAME); users = conn.execute("SELECT user_id FROM users").fetchall(); conn.close()
     success = 0
     for u in users:
-        try: await context.bot.send_message(chat_id=u[0], text=f"📢 Tulpor Yemlari:\n\n{update.message.text}"); success += 1
+        try: await context.bot.send_message(chat_id=u[0], text=f"📢 Tulpor Savdo Markazi:\n\n{update.message.text}"); success += 1
         except: pass
     await update.message.reply_text(f"✅ Jami {success} ta foydalanuvchiga yetkazildi!"); return ConversationHandler.END
 
@@ -226,4 +226,4 @@ def main():
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__': main()
-        
+    
