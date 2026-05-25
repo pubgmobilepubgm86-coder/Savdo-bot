@@ -19,6 +19,7 @@ def init_db():
     cursor.execute('''CREATE TABLE IF NOT EXISTS items (name TEXT, price TEXT, image_id TEXT, description TEXT, category TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS cart (user_id INTEGER, item_id INTEGER, quantity TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS admins (user_id INTEGER)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY)''')
     if not cursor.execute("SELECT * FROM admins WHERE user_id=?", (MASTER_ADMIN,)).fetchone():
         cursor.execute("INSERT INTO admins VALUES (?)", (MASTER_ADMIN,))
     conn.commit()
@@ -42,8 +43,14 @@ def is_admin(user_id):
 
 # --- ASOSIY MENYU ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    conn = sqlite3.connect('items.db')
+    conn.execute("INSERT OR IGNORE INTO users VALUES (?)", (user_id,))
+    conn.commit()
+    conn.close()
+    
     kb = [["TOVARLAR 🌐", "🛒 Savat"], ["🚚 Yetkazib berish", "ℹ️ Biz haqimizda"]]
-    if is_admin(update.effective_user.id): kb.append(["🛠 Admin Panel"])
+    if is_admin(user_id): kb.append(["🛠 Admin Panel"])
     await update.message.reply_text("Assalomu alaykum! Tulpor yemlari botiga xush kelibsiz.", 
                                     reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
@@ -59,9 +66,10 @@ async def handle_main(update, context):
             await update.message.reply_text("Guruhni tanlang:", reply_markup=InlineKeyboardMarkup(kb))
     elif text == "🛒 Savat": await show_cart(update, context)
     elif text == "🚚 Yetkazib berish": await update.message.reply_text("🚚 Chortoq bo'ylab yetkazib berish xizmatimiz mavjud.")
-    elif text == "ℹ️ Biz haqimizda": await update.message.reply_text("Tulpor yemlari - biz sifatli va arzon mahsulotlarni yetkazib beramiz.")
+    elif text == "ℹ️ Biz haqimizda": await update.message.reply_text("Tulpor yemlari - sifatli mahsulotlar!")
     elif text == "🛠 Admin Panel" and is_admin(update.effective_user.id):
-        kb = [[InlineKeyboardButton("➕ Tovar qo'shish", callback_data='add_item'), InlineKeyboardButton("➖ Tovar o'chirish", callback_data='del_item')]]
+        kb = [[InlineKeyboardButton("➕ Tovar qo'shish", callback_data='add_item'), InlineKeyboardButton("➖ Tovar o'chirish", callback_data='del_item')],
+              [InlineKeyboardButton("📊 Statistika", callback_data='show_stats')]]
         if update.effective_user.id == MASTER_ADMIN:
             kb.append([InlineKeyboardButton("👤 Yangi admin qo'shish", callback_data='add_admin')])
         await update.message.reply_text("Admin boshqaruvi:", reply_markup=InlineKeyboardMarkup(kb))
@@ -134,6 +142,15 @@ async def perform_delete(update, context):
     await query.answer("O'chirildi!")
     await query.message.edit_text("✅ Tovar o'chirildi.")
 
+# --- STATISTIKA ---
+async def show_stats(update, context):
+    conn = sqlite3.connect('items.db')
+    count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    users = conn.execute("SELECT user_id FROM users").fetchall()
+    conn.close()
+    user_list = "\n".join([str(u[0]) for u in users])
+    await update.callback_query.message.reply_text(f"📊 **Bot foydalanuvchilari soni:** {count}\n\nIDlar:\n{user_list}")
+
 # --- SAVAT, BUYURTMA, JAVOB ---
 async def show_cart(update, context):
     conn = sqlite3.connect('items.db')
@@ -175,7 +192,6 @@ async def send_reply(update, context):
     await update.message.reply_text("✅ Javob yuborildi!")
     return ConversationHandler.END
 
-# --- ADMIN QO'SHISH ---
 async def add_admin_start(update, context):
     await update.callback_query.message.reply_text("Yangi adminning ID raqamini kiriting:")
     return NEW_ADMIN
@@ -212,6 +228,7 @@ if __name__ == '__main__':
         entry_points=[CallbackQueryHandler(add_admin_start, pattern='add_admin')],
         states={NEW_ADMIN: [MessageHandler(filters.TEXT, save_admin)]}, fallbacks=[CommandHandler("start", start)]))
 
+    app.add_handler(CallbackQueryHandler(show_stats, pattern='show_stats'))
     app.add_handler(CallbackQueryHandler(del_item_menu, pattern='del_item'))
     app.add_handler(CallbackQueryHandler(perform_delete, pattern=r'^del_\d+$'))
     app.add_handler(CommandHandler("start", start))
