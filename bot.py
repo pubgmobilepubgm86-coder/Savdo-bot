@@ -132,9 +132,10 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "clear_cart":
         conn = sqlite3.connect(DB_NAME); conn.execute("DELETE FROM cart WHERE user_id=?", (uid,)); conn.commit(); conn.close()
         await query.message.edit_text("🗑 Savatingiz tozalandi!")
-    elif data == "show_stats" and is_admin(uid):
-        conn = sqlite3.connect(DB_NAME); count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]; conn.close()
-        await query.message.reply_text(f"📊 Jami foydalanuvchilar: {count} ta.")
+    elif data == "show_stats":
+        if is_admin(uid):
+            conn = sqlite3.connect(DB_NAME); count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]; conn.close()
+            await query.message.reply_text(f"📊 Jami foydalanuvchilar: {count} ta.")
     elif data == "del_item" and is_admin(uid):
         conn = sqlite3.connect(DB_NAME); items = conn.execute("SELECT id, name FROM items").fetchall(); conn.close()
         kb = [[InlineKeyboardButton(f"❌ {i[1]}", callback_data=f"del_{i[0]}")] for i in items]
