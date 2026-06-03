@@ -2,6 +2,7 @@ import os
 import time
 import logging
 import threading
+import asyncio
 import requests
 from flask import Flask
 from telegram import Update
@@ -27,8 +28,7 @@ def run_flask():
 
 # 3. SELF-PING (BOTNI UYG'OQ SAQLASH)
 def self_ping():
-    # 20 soniya kutib keyin ping boshlaydi
-    time.sleep(20)
+    time.sleep(20)  # Server to'liq ishlab ketishi uchun biroz kutish
     url = os.environ.get("RENDER_EXTERNAL_URL")
     if not url:
         logging.warning("RENDER_EXTERNAL_URL topilmadi. Self-ping ishga tushmadi.")
@@ -40,7 +40,7 @@ def self_ping():
             logging.info(f"Self-ping bajarildi. Status kod: {response.status_code}")
         except Exception as e:
             logging.error(f"Self-pingda xatolik: {e}")
-        time.sleep(600) # Har 10 daqiqada (600 soniya) bir marta
+        time.sleep(600)  # Har 10 daqiqada bir marta
 
 # 4. TELEGRAM BOT KOMANDALARI
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -52,15 +52,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def check_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_input = update.message.text
     
-    # ID faqat raqam va uzunligi 8, 9 yoki 10 xonali bo'lishini tekshiramiz
     if user_input.isdigit() and 8 <= len(user_input) <= 10:
         await update.message.reply_text(f"✅ **ID formati to'g'ri:** `{user_input}`", parse_mode="Markdown")
     else:
         await update.message.reply_text("❌ **Noto'g'ri format!**\n1xBet ID faqat 8, 9 yoki 10 xonali raqamlardan iborat bo'lishi kerak.")
 
-# MAIN (ISHGA TUSHIRISH)
-def main():
-    # Flask serverni alohida oqimda (thread) boshlash
+# ASOSIY ISHGA TUSHIRISH FUNKSIYASI
+async def main():
+    # Flask serverni alohida oqimda boshlash
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
@@ -70,15 +69,26 @@ def main():
     ping_thread.daemon = True
     ping_thread.start()
 
-    # Botni qurish va ishga tushirish
+    # Botni qurish
     application = ApplicationBuilder().token(BOT_TOKEN).build()
 
+    # Handlerlarni qo'shish
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_id))
 
+    # Botni asinxron ishga tushirish
     logging.info("Bot polling rejimida ishga tushdi...")
-    application.run_polling()
+    
+    # run_polling o'rniga asinxron boshqaruvdan foydalanamiz
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling()
+    
+    # Bot to'xtab qolmasligi uchun cheksiz sikl
+    while True:
+        await asyncio.sleep(3600)
 
 if __name__ == '__main__':
-    main()
+    # Event loop xatoligini oldini olish uchun asosiy funksiyani asyncio orqali yuritamiz
+    asyncio.run(main())
     
