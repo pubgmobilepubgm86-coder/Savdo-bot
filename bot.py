@@ -1,88 +1,84 @@
-
 import os
-import asyncio
+import time
 import logging
-import aiohttp
-from aiohttp import web
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import CommandStart
+import threading
+import requests
+from flask import Flask
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
-# Loglarni konsolda ko'rish uchun sozlama
+# Loglarni sozlash
 logging.basicConfig(level=logging.INFO)
 
-# Botingizning maxfiy tokeni
+# 1. BOT TOKEN
 BOT_TOKEN = "8845838662:AAFg9jJjjzvQlIASzEDQCLz9EcaZ3FDb6OU"
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+# 2. FLASK VEB-SERVER QISMI
+app = Flask(__name__)
 
-# Botga /start buyrug'i berilganda
-@dp.message(CommandStart())
-async def start_cmd(message: types.Message):
-    await message.answer(
+@app.route('/')
+def home():
+    return "Bot muvaffaqiyatli 24/7 rejimda ishlamoqda!"
+
+def run_flask():
+    # Render beradigan portni oladi, bo'lmasa 8080
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
+
+# 3. SELF-PING (BOTNI UYG'OQ SAQLASH)
+def self_ping():
+    # 20 soniya kutib keyin ping boshlaydi
+    time.sleep(20)
+    url = os.environ.get("RENDER_EXTERNAL_URL")
+    if not url:
+        logging.warning("RENDER_EXTERNAL_URL topilmadi. Self-ping ishga tushmadi.")
+        return
+        
+    while True:
+        try:
+            response = requests.get(url)
+            logging.info(f"Self-ping bajarildi. Status kod: {response.status_code}")
+        except Exception as e:
+            logging.error(f"Self-pingda xatolik: {e}")
+        time.sleep(600) # Har 10 daqiqada (600 soniya) bir marta
+
+# 4. TELEGRAM BOT KOMANDALARI
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
         "👋 Salom! Men Render platformasida 24/7 ishlovchi botman.\n\n"
         "🔍 Menga 1xBet ID raqamini yuboring, men uning formatini tekshirib beraman!"
     )
 
-# Foydalanuvchi xabar (ID) yuborganda tekshirish qismi
-@dp.message()
-async def check_id(message: types.Message):
-    user_input = message.text
+async def check_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_input = update.message.text
     
-    # 1xBet ID faqat raqamdan iboratligini va uzunligi 8, 9 yoki 10 xonali ekanligini tekshiramiz
+    # ID faqat raqam va uzunligi 8, 9 yoki 10 xonali bo'lishini tekshiramiz
     if user_input.isdigit() and 8 <= len(user_input) <= 10:
-        await message.answer(f"✅ **ID formati to'g'ri:** `{user_input}`", parse_mode="Markdown")
+        await update.message.reply_text(f"✅ **ID formati to'g'ri:** `{user_input}`", parse_mode="Markdown")
     else:
-        await message.answer("❌ **Noto'g'ri format!**\n1xBet ID faqat 8, 9 yoki 10 xonali raqamlardan iborat bo'lishi kerak.")
+        await update.message.reply_text("❌ **Noto'g'ri format!**\n1xBet ID faqat 8, 9 yoki 10 xonali raqamlardan iborat bo'lishi kerak.")
 
-# === RENDER PLATFORMASI UCHUN VEB-SERVER (UYLAMASLIK UCHUN) ===
-async def web_handle(request):
-    return web.Response(text="Bot muvaffaqiyatli 24/7 rejimda ishlamoqda!")
+# MAIN (ISHGA TUSHIRISH)
+def main():
+    # Flask serverni alohida oqimda (thread) boshlash
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
 
-async def start_web_server():
-    app = web.Application()
-    app.router.add_get("/", web_handle)
+    # Self-pingni alohida oqimda boshlash
+    ping_thread = threading.Thread(target=self_ping)
+    ping_thread.daemon = True
+    ping_thread.start()
+
+    # Botni qurish va ishga tushirish
+    application = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_id))
+
+    logging.info("Bot polling rejimida ishga tushdi...")
+    application.run_polling()
+
+if __name__ == '__main__':
+    main()
     
-    # Render muhitda beradigan portni oladi, bo'lmasa 8080 port
-    port = int(os.getenv("PORT", 8080))
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-    logging.info(f"Veb-server {port}-portda ishga tushdi.")
-
-# === SELF-PING: BOTNI UYQUGA KETISHIDAN SAQLASH FUNKSIYASI ===
-async def self_ping():
-    # Render beradigan loyihangizning tashqi URL manzili
-    url = os.getenv("RENDER_EXTERNAL_URL")
-    if not url:
-        logging.warning("RENDER_EXTERNAL_URL topilmadi. Self-ping hozircha ishga tushmadi.")
-        return
-
-    await asyncio.sleep(20)  # Bot to'liq ishlab ketishi uchun biroz kutish
-    async with aiohttp.ClientSession() as session:
-        while True:
-            try:
-                async with session.get(url) as response:
-                    logging.info(f"Self-ping muvaffaqiyatli: Status {response.status}")
-            except Exception as e:
-                logging.error(f"Self-pingda xatolik: {e}")
-            
-            # Har 10 daqiqada (600 soniya) o'ziga o'zi so'rov yuborib turadi
-            await asyncio.sleep(600)
-
-# Asosiy ishga tushirish funksiyasi
-async def main():
-    # Veb-serverni yuklaymiz
-    await start_web_server()
-    
-    # Orqa fonda self-ping funksiyasini faollashtiramiz
-    asyncio.create_task(self_ping())
-    
-    # Botni ishga tushiramiz
-    logging.info("Bot polling rejimida ishga tushmoqda...")
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
-      
