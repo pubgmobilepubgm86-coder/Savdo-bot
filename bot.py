@@ -32,7 +32,8 @@ app = Flask(__name__)
 users_db = {}
 tasks_db = {}
 promocodes_db = {}
-settings_db = {"ref_reward": 5}
+# game_reward qoshildi: default 1 ta stars
+settings_db = {"ref_reward": 5, "game_reward": 1}
 gifts_db = {
     "1": {"name": "🧸 Ayiqcha (Mines)", "price": 15},
     "2": {"name": "💎 Telegram Premium (1 oy)", "price": 250}
@@ -79,6 +80,7 @@ class AdminState(StatesGroup):
     waiting_for_ref_reward = State()
     waiting_for_target_id = State()
     waiting_for_balance_val = State()
+    waiting_for_game_reward = State() # Yengi holat qoshildi
 
 class UserState(StatesGroup):
     entering_promo = State()
@@ -203,8 +205,10 @@ async def play_dice(message: types.Message):
     
     win = (emoji in ["🎯", "🎲"] and msg.dice.value == 6) or (emoji == "🏀" and msg.dice.value in [4, 5])
     if win:
-        u["stars"] += 2
-        await message.answer(f"🎉 <b>Yutuq!</b> +2 ⭐\n⚡ Qolgan energiya: {u['attempts']}", parse_mode="HTML")
+        # Dinamik yutuq qoshildi (Admin paneldan o'zgarsa ham shu yerdan oladi)
+        reward = settings_db.get("game_reward", 1)
+        u["stars"] += reward
+        await message.answer(f"🎉 <b>Yutuq!</b> +{reward} ⭐\n⚡ Qolgan energiya: {u['attempts']}", parse_mode="HTML")
     else:
         await message.answer(f"❌ <b>O'xshamadi.</b> Natija: {msg.dice.value}\n⚡ Energiya: {u['attempts']}", parse_mode="HTML")
 
@@ -323,8 +327,17 @@ async def request_withdraw(callback: types.CallbackQuery):
 async def accept_w(callback: types.CallbackQuery):
     _, _, uid, price = callback.data.split("_")
     await callback.message.edit_text(callback.message.html_text + "\n\n✅ <b>Qabul qilindi!</b>", parse_mode="HTML")
+    
+    # Yangi xabar matni va tugmasi qoshildi
+    user_kb = InlineKeyboardBuilder()
+    user_kb.button(text="👨‍💻 Operatorga murojaat", url=f"https://t.me/{ADMIN_USERNAME}")
+    
     try:
-        await bot.send_message(int(uid), "✅ <b>Tabriklaymiz!</b> Sizning sovg'a so'rovingiz admin tomonidan tasdiqlandi va amalga oshirildi!", parse_mode="HTML")
+        msg_text = (
+            "✅ <b>Tabriklaymiz!</b> Sizning sovg'a so'rovingiz admin tomonidan tasdiqlandi va amalga oshirildi!\n\n"
+            "⚠️ <i>Agar Stars kelmagan bo'lsa, operatorga murojaat qiling.</i>"
+        )
+        await bot.send_message(int(uid), msg_text, parse_mode="HTML", reply_markup=user_kb.as_markup())
     except: pass
 
 @dp.callback_query(F.data.startswith("no_w_"))
@@ -350,6 +363,7 @@ async def admin_panel(message: types.Message):
     kb.button(text="🗑 Sovg'a", callback_data="adm_del_gift")
     kb.button(text="🎟 Promo", callback_data="adm_add_promo")
     kb.button(text="🔗 Ref Narx", callback_data="adm_edit_ref")
+    kb.button(text="🎮 O'yin Narxi", callback_data="adm_edit_game") # Yangi tugma qoshildi
     kb.button(text="💰 Balans", callback_data="adm_edit_bal")
     kb.button(text="📊 Statistika", callback_data="adm_get_stats")
     kb.adjust(2)
@@ -370,6 +384,21 @@ async def a_ref2(message: types.Message, state: FSMContext):
         settings_db["ref_reward"] = int(message.text)
         await message.answer(f"✅ Ref narxi o'zgardi: {message.text} ⭐")
     await state.clear()
+
+# --- YANGI O'YIN NARXI FUNKSIYALARI ---
+@dp.callback_query(F.data == "adm_edit_game")
+async def a_game1(callback: types.CallbackQuery, state: FSMContext):
+    current_reward = settings_db.get("game_reward", 1)
+    await callback.message.answer(f"Hozirgi o'yin yutuq mukofoti: {current_reward} ⭐\nYangi yutuq narxini kiriting (Masalan: 1):")
+    await state.set_state(AdminState.waiting_for_game_reward)
+
+@dp.message(AdminState.waiting_for_game_reward)
+async def a_game2(message: types.Message, state: FSMContext):
+    if message.text.isdigit():
+        settings_db["game_reward"] = int(message.text)
+        await message.answer(f"✅ O'yin yutuq narxi o'zgardi: {message.text} ⭐")
+    await state.clear()
+# --------------------------------------
 
 # --- VAZIFA ---
 @dp.callback_query(F.data == "adm_add_task")
@@ -450,6 +479,11 @@ async def a_delgift_action(callback: types.CallbackQuery):
     await callback.message.edit_text("✅ O'chirildi!")
 
 # --- PROMOKOD ---
+@dp.callback_query(F.data == "adm_add_promo")
+async def a_promo1(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.answer("1/3: Promo matni:")
+    await state.set_state(AdminState.waiting_for_promo_code)
+
 @dp.callback_query(F.data == "adm_add_promo")
 async def a_promo1(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.answer("1/3: Promo matni:")
