@@ -224,20 +224,32 @@ async def tasks_menu(message: types.Message):
     u = init_user(message.from_user.id, message.from_user.first_name)
     tasks = [t for t in tasks_db if t not in u["completed_tasks"]]
     if not tasks:
-        return await message.answer("Barcha vazifalar bajarilgan!")
+        return await message.answer("Barcha vazifalar bajarilgan yoki hozircha vazifalar yo'q!")
         
     for tid in tasks:
         t = tasks_db[tid]
         kb = InlineKeyboardBuilder()
-        kb.button(text="🔗 Kanal", url=t['url'])
+        
+        # --- MUAMMONI HAL QILISH: URL xavfsizligini tekshirish ---
+        safe_url = t['url']
+        if not safe_url.startswith(("http://", "https://", "tg://")):
+            safe_url = f"https://t.me/{safe_url.replace('@', '')}"
+            
+        kb.button(text="🔗 Kanal", url=safe_url)
         kb.button(text="✅ Tekshirish", callback_data=f"chk_t_{tid}")
         kb.adjust(1)
         
         cap = f"📝 {t['desc']}\n💎 Mukofot: {t['reward']} ⭐"
-        if t['photo'] != "none":
-            await message.answer_photo(photo=t['photo'], caption=cap, reply_markup=kb.as_markup())
-        else:
-            await message.answer(text=cap, reply_markup=kb.as_markup())
+        
+        # --- MUAMMONI HAL QILISH: Xatoliklarni ushlab qolish ---
+        try:
+            if t['photo'] != "none":
+                await message.answer_photo(photo=t['photo'], caption=cap, reply_markup=kb.as_markup())
+            else:
+                await message.answer(text=cap, reply_markup=kb.as_markup())
+        except Exception as e:
+            logging.error(f"Vazifa yuborishda xatolik: {e}")
+            await message.answer(f"⚠️ <b>{t['desc']}</b> vazifasida xatolik bor! (Admin URLni xato kiritgan).", parse_mode="HTML")
 
 @dp.callback_query(F.data.startswith("chk_t_"))
 async def check_task(callback: types.CallbackQuery):
