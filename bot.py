@@ -17,7 +17,7 @@ from aiogram.fsm.context import FSMContext
 # =====================================================================
 # 2. ASOSIY SOZLAMALAR VA BAZA
 # =====================================================================
-BOT_TOKEN = "8788707258:AAGAsvxTBVYPqeT92qJDjqr0dgnsX8eZ2Fg"
+BOT_TOKEN = "8788707258:AAHeT6I4pLhlx94IvEjJFCfCgmDN4KfeUZ8"
 ADMIN_ID = 8086545587
 ADMIN_USERNAME = "pubgmobilepubgm86_coder"
 PORT = int(os.environ.get("PORT", 10000))
