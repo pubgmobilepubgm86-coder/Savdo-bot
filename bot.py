@@ -312,9 +312,10 @@ async def request_withdraw(callback: types.CallbackQuery):
         kb.button(text="✅ Tasdiqlash", callback_data=f"ok_w_{uid}_{g['price']}")
         kb.button(text="❌ Rad etish", callback_data=f"no_w_{uid}_{g['price']}")
         
+        # O'ZGARISH 1: Admin xabarida Ismga foydalanuvchi profiliga olib boruvchi silka (ID orqali) va nusxalanadigan ID qo'shildi
         await bot.send_message(
             chat_id=ADMIN_ID,
-            text=f"🔔 <b>Yangi so'rov!</b>\n👤 Ism: {callback.from_user.full_name}\n🆔 {uid}\n🎁 {g['name']}\n💎 {g['price']} ⭐",
+            text=f"🔔 <b>Yangi so'rov!</b>\n👤 Ism: <a href='tg://user?id={uid}'>{callback.from_user.full_name}</a>\n🆔 <code>{uid}</code>\n🎁 {g['name']}\n💎 {g['price']} ⭐",
             parse_mode="HTML", reply_markup=kb.as_markup()
         )
         await callback.answer("✅ So'rov adminga yuborildi!", show_alert=True)
@@ -328,9 +329,9 @@ async def accept_w(callback: types.CallbackQuery):
     _, _, uid, price = callback.data.split("_")
     await callback.message.edit_text(callback.message.html_text + "\n\n✅ <b>Qabul qilindi!</b>", parse_mode="HTML")
     
-    # Yangi xabar matni va tugmasi qoshildi
     user_kb = InlineKeyboardBuilder()
-    user_kb.button(text="👨‍💻 Operatorga murojaat", url=f"https://t.me/{ADMIN_USERNAME}")
+    # O'ZGARISH 2: Username o'rniga to'g'ridan-to'g'ri sizning ID raqamingiz orqali lichkangizga o'tadigan qilindi.
+    user_kb.button(text="👨‍💻 Operatorga murojaat", url=f"tg://user?id={ADMIN_ID}")
     
     try:
         msg_text = (
