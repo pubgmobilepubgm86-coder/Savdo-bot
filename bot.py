@@ -4,10 +4,11 @@
 import os
 import asyncio
 import logging
+import json
 from threading import Thread
 from flask import Flask
 
-from aiogram import Bot, Dispatcher, types, F
+from aiogram import Bot, Dispatcher, types, F, BaseMiddleware
 from aiogram.filters import CommandStart
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -15,12 +16,13 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 
 # =====================================================================
-# 2. ASOSIY SOZLAMALAR VA BAZA
+# 2. ASOSIY SOZLAMALAR VA BAZA (JSON)
 # =====================================================================
 BOT_TOKEN = "8788707258:AAHeT6I4pLhlx94IvEjJFCfCgmDN4KfeUZ8"
 ADMIN_ID = 8086545587
 ADMIN_USERNAME = "pubgmobilepubgm86_coder"
 PORT = int(os.environ.get("PORT", 10000))
+DATA_FILE = "bot_data.json"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
 
@@ -28,16 +30,45 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 app = Flask(__name__)
 
-# Ma'lumotlar bazasi (Xotirada)
+# Ma'lumotlar bazasi
 users_db = {}
 tasks_db = {}
 promocodes_db = {}
-# game_reward qoshildi: default 1 ta stars
-settings_db = {"ref_reward": 5, "game_reward": 1}
+settings_db = {"ref_reward": 5, "game_reward": 1, "mand_channel": None}
 gifts_db = {
     "1": {"name": "🧸 Ayiqcha (Mines)", "price": 15},
     "2": {"name": "💎 Telegram Premium (1 oy)", "price": 250}
 }
+
+# --- BAZANI SAQLASH VA YUKLASH FUNKSIYALARI ---
+def load_data():
+    global users_db, tasks_db, promocodes_db, settings_db, gifts_db
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r") as f:
+                data = json.load(f)
+                # JSON kalitlari string bo'ladi, users_db kalitlarini int ga o'tkazamiz
+                users_db = {int(k): v for k, v in data.get("users_db", {}).items()}
+                tasks_db = data.get("tasks_db", {})
+                promocodes_db = data.get("promocodes_db", {})
+                settings_db = data.get("settings_db", {"ref_reward": 5, "game_reward": 1, "mand_channel": None})
+                gifts_db = data.get("gifts_db", {})
+        except Exception as e:
+            logging.error(f"Baza yuklashda xato: {e}")
+
+def save_data():
+    data = {
+        "users_db": users_db,
+        "tasks_db": tasks_db,
+        "promocodes_db": promocodes_db,
+        "settings_db": settings_db,
+        "gifts_db": gifts_db
+    }
+    try:
+        with open(DATA_FILE, "w") as f:
+            json.dump(data, f, indent=4)
+    except Exception as e:
+        logging.error(f"Baza saqlashda xato: {e}")
 
 def init_user(user_id: int, name: str) -> dict:
     if user_id not in users_db:
@@ -46,12 +77,74 @@ def init_user(user_id: int, name: str) -> dict:
             "stars": 0,
             "attempts": 10,
             "completed_tasks": [],
-            "used_promos": []
+            "used_promos": [],
+            "refs": 0  # Yangi: Referallar soni
         }
+        save_data()
     return users_db[user_id]
 
 # =====================================================================
-# 3. KEEP-ALIVE SERVER (RENDER UCHUN)
+# 3. MAJBURIY OBUNA (MIDDLEWARE)
+# =====================================================================
+class MandSubMiddleware(BaseMiddleware):
+    async def __call__(self, handler, event, data):
+        bot: Bot = data['bot']
+        user = event.from_user
+        channel = settings_db.get("mand_channel")
+        
+        # Tasdiqlash tugmasini o'tkazib yuborish
+        if isinstance(event, types.CallbackQuery) and event.data == "check_mand_sub":
+            return await handler(event, data)
+            
+        if channel and user.id != ADMIN_ID:
+            try:
+                member = await bot.get_chat_member(chat_id=channel, user_id=user.id)
+                if member.status not in ['member', 'administrator', 'creator']:
+                    # Obuna bo'lmagan
+                    kb = InlineKeyboardBuilder()
+                    safe_url = f"https://t.me/{channel.replace('@', '')}"
+                    kb.button(text="📢 Kanalga a'zo bo'lish", url=safe_url)
+                    kb.button(text="✅ Tasdiqlash", callback_data="check_mand_sub")
+                    kb.adjust(1)
+                    
+                    msg_text = f"⚠️ <b>Botdan foydalanish uchun rasmiy kanalimizga obuna bo'lishingiz majburiy!</b>\n\nIltimos, pastdagi tugma orqali {channel} kanaliga obuna bo'ling."
+                    
+                    if isinstance(event, types.Message):
+                        await event.answer(msg_text, reply_markup=kb.as_markup(), parse_mode="HTML")
+                    elif isinstance(event, types.CallbackQuery):
+                        await event.message.answer(msg_text, reply_markup=kb.as_markup(), parse_mode="HTML")
+                        await event.answer()
+                    return # Jarayonni to'xtatish
+            except Exception as e:
+                logging.error(f"Majburiy obuna tekshirishda xatolik: {e}")
+                pass # Agar bot kanalda admin bo'lmasa, o'tkazib yuboramiz
+                
+        return await handler(event, data)
+
+dp.message.middleware(MandSubMiddleware())
+dp.callback_query.middleware(MandSubMiddleware())
+
+@dp.callback_query(F.data == "check_mand_sub")
+async def check_mand_sub_callback(callback: types.CallbackQuery):
+    channel = settings_db.get("mand_channel")
+    if not channel:
+        await callback.message.delete()
+        await callback.message.answer("Siz botdan to'liq foydalanishingiz mumkin!", reply_markup=main_menu(callback.from_user.id))
+        return
+    
+    try:
+        member = await bot.get_chat_member(chat_id=channel, user_id=callback.from_user.id)
+        if member.status in ['member', 'administrator', 'creator']:
+            await callback.message.delete()
+            await callback.message.answer("✅ <b>Obuna tasdiqlandi!</b> Botdan bemalol foydalanishingiz mumkin.", parse_mode="HTML", reply_markup=main_menu(callback.from_user.id))
+        else:
+            await callback.answer("❌ Hali kanalga obuna bo'lmadingiz!", show_alert=True)
+    except:
+        await callback.message.delete()
+        await callback.message.answer("Xatolik yuz berdi. Iltimos, qayta urinib ko'ring.", reply_markup=main_menu(callback.from_user.id))
+
+# =====================================================================
+# 4. KEEP-ALIVE SERVER (RENDER UCHUN)
 # =====================================================================
 @app.route('/')
 def index():
@@ -61,7 +154,7 @@ def start_flask():
     app.run(host="0.0.0.0", port=PORT)
 
 # =====================================================================
-# 4. FSM HOLATLAR ZANJIRI (ADMIN VA USER UCHUN)
+# 5. FSM HOLATLAR ZANJIRI (ADMIN VA USER UCHUN)
 # =====================================================================
 class AdminState(StatesGroup):
     waiting_for_task_photo = State()
@@ -80,13 +173,14 @@ class AdminState(StatesGroup):
     waiting_for_ref_reward = State()
     waiting_for_target_id = State()
     waiting_for_balance_val = State()
-    waiting_for_game_reward = State() # Yengi holat qoshildi
+    waiting_for_game_reward = State()
+    waiting_for_mand_channel = State() # Majburiy obuna kanali uchun
 
 class UserState(StatesGroup):
     entering_promo = State()
 
 # =====================================================================
-# 5. MENYU KLAVIATURALARI
+# 6. MENYU KLAVIATURALARI
 # =====================================================================
 def main_menu(user_id: int):
     kb = ReplyKeyboardBuilder()
@@ -113,7 +207,7 @@ def games_menu():
     return kb.as_markup(resize_keyboard=True)
 
 # =====================================================================
-# 6. ASOSIY BO'LIMLAR (START, PROFIL, MALUMOT)
+# 7. ASOSIY BO'LIMLAR (START, PROFIL, MALUMOT)
 # =====================================================================
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
@@ -126,7 +220,9 @@ async def cmd_start(message: types.Message):
         if ref_id in users_db and ref_id != uid:
             if ref_id not in users_db[uid]["used_promos"]:
                 users_db[ref_id]["stars"] += settings_db["ref_reward"]
+                users_db[ref_id]["refs"] = users_db[ref_id].get("refs", 0) + 1 # Referal sonini oshirish
                 users_db[uid]["used_promos"].append(ref_id)
+                save_data() # Saqlash
                 try:
                     await bot.send_message(ref_id, f"🎉 <b>Yangi do'st!</b> Havolangiz orqali qo'shildi.\n+{settings_db['ref_reward']} ⭐", parse_mode="HTML")
                 except: pass
@@ -145,6 +241,7 @@ async def profile_handler(message: types.Message):
     await message.answer(
         f"👤 Profil:\n"
         f"🆔 {message.from_user.id}\n"
+        f"👥 Taklif qilgan do'stlari: {u.get('refs', 0)} ta\n"
         f"💎 Balans: {u['stars']} ⭐\n"
         f"⚡ Energiya: {u['attempts']} marta",
         parse_mode="HTML"
@@ -186,7 +283,7 @@ async def ref_handler(message: types.Message):
     )
 
 # =====================================================================
-# 7. O'YINLAR (DICE)
+# 8. O'YINLAR (DICE)
 # =====================================================================
 @dp.message(F.text == "💎 Stars ishlash (O'yinlar)")
 async def games_start(message: types.Message):
@@ -199,15 +296,17 @@ async def play_dice(message: types.Message):
         return await message.answer("⚡ Bugungi energiya tugadi!")
     
     u["attempts"] -= 1
+    save_data() # Urinish ayirildi
+    
     emoji = message.text.split()[0]
     msg = await message.answer_dice(emoji=emoji)
     await asyncio.sleep(2.5)
     
     win = (emoji in ["🎯", "🎲"] and msg.dice.value == 6) or (emoji == "🏀" and msg.dice.value in [4, 5])
     if win:
-        # Dinamik yutuq qoshildi (Admin paneldan o'zgarsa ham shu yerdan oladi)
         reward = settings_db.get("game_reward", 1)
         u["stars"] += reward
+        save_data() # Pul qo'shildi
         await message.answer(f"🎉 <b>Yutuq!</b> +{reward} ⭐\n⚡ Qolgan energiya: {u['attempts']}", parse_mode="HTML")
     else:
         await message.answer(f"❌ <b>O'xshamadi.</b> Natija: {msg.dice.value}\n⚡ Energiya: {u['attempts']}", parse_mode="HTML")
@@ -217,7 +316,7 @@ async def back_btn(message: types.Message):
     await message.answer("Asosiy menyu:", reply_markup=main_menu(message.from_user.id))
 
 # =====================================================================
-# 8. VAZIFALAR VA PROMOKOD
+# 9. VAZIFALAR VA PROMOKOD
 # =====================================================================
 @dp.message(F.text == "📋 Vazifalar (Free Stars)")
 async def tasks_menu(message: types.Message):
@@ -230,7 +329,6 @@ async def tasks_menu(message: types.Message):
         t = tasks_db[tid]
         kb = InlineKeyboardBuilder()
         
-        # --- MUAMMONI HAL QILISH: URL xavfsizligini tekshirish ---
         safe_url = t['url']
         if not safe_url.startswith(("http://", "https://", "tg://")):
             safe_url = f"https://t.me/{safe_url.replace('@', '')}"
@@ -241,15 +339,14 @@ async def tasks_menu(message: types.Message):
         
         cap = f"📝 {t['desc']}\n💎 Mukofot: {t['reward']} ⭐"
         
-        # --- MUAMMONI HAL QILISH: Xatoliklarni ushlab qolish ---
         try:
             if t['photo'] != "none":
                 await message.answer_photo(photo=t['photo'], caption=cap, reply_markup=kb.as_markup())
             else:
                 await message.answer(text=cap, reply_markup=kb.as_markup())
         except Exception as e:
-            logging.error(f"Vazifa yuborishda xatolik: {e}")
-            await message.answer(f"⚠️ <b>{t['desc']}</b> vazifasida xatolik bor! (Admin URLni xato kiritgan).", parse_mode="HTML")
+            logging.error(f"Vazifa yuborish xatosi: {e}")
+            await message.answer(f"⚠️ <b>{t['desc']}</b> vazifasida xatolik bor!", parse_mode="HTML")
 
 @dp.callback_query(F.data.startswith("chk_t_"))
 async def check_task(callback: types.CallbackQuery):
@@ -265,6 +362,7 @@ async def check_task(callback: types.CallbackQuery):
         if member.status in ['member', 'administrator', 'creator']:
             u["stars"] += t['reward']
             u["completed_tasks"].append(tid)
+            save_data() # Baza yangilandi
             await callback.message.delete()
             await callback.answer(f"✅ +{t['reward']} ⭐ berildi!", show_alert=True)
         else:
@@ -288,6 +386,7 @@ async def promo_check(message: types.Message, state: FSMContext):
             u["stars"] += p["reward"]
             u["used_promos"].append(code)
             p["limit"] -= 1
+            save_data() # Baza yangilandi
             await message.answer(f"✅ +{p['reward']} ⭐ qo'shildi!")
         else:
             await message.answer("❌ Limit tugagan yoki foydalangansiz.")
@@ -296,7 +395,7 @@ async def promo_check(message: types.Message, state: FSMContext):
     await state.clear()
 
 # =====================================================================
-# 9. STARS CHIQARISH VA TASDIQLASH
+# 10. STARS CHIQARISH VA TASDIQLASH
 # =====================================================================
 @dp.message(F.text == "📤 Stars chiqarish")
 async def withdraw_menu(message: types.Message):
@@ -320,18 +419,18 @@ async def request_withdraw(callback: types.CallbackQuery):
     
     if g and u["stars"] >= g["price"]:
         u["stars"] -= g["price"]
+        save_data() # Pul ayirildi, saqlash
+        
         kb = InlineKeyboardBuilder()
         kb.button(text="✅ Tasdiqlash", callback_data=f"ok_w_{uid}_{g['price']}")
         kb.button(text="❌ Rad etish", callback_data=f"no_w_{uid}_{g['price']}")
         
-        # O'ZGARISH 1: Admin xabarida Ismga foydalanuvchi profiliga olib boruvchi silka (ID orqali) va nusxalanadigan ID qo'shildi
         await bot.send_message(
             chat_id=ADMIN_ID,
             text=f"🔔 <b>Yangi so'rov!</b>\n👤 Ism: <a href='tg://user?id={uid}'>{callback.from_user.full_name}</a>\n🆔 <code>{uid}</code>\n🎁 {g['name']}\n💎 {g['price']} ⭐",
             parse_mode="HTML", reply_markup=kb.as_markup()
         )
         await callback.answer("✅ So'rov adminga yuborildi!", show_alert=True)
-        # Edit user message nicely
         await callback.message.edit_text(callback.message.html_text + "\n\n⏳ <i>So'rov ko'rib chiqilmoqda...</i>", parse_mode="HTML")
     else:
         await callback.answer("❌ Balans yetarli emas!", show_alert=True)
@@ -342,14 +441,10 @@ async def accept_w(callback: types.CallbackQuery):
     await callback.message.edit_text(callback.message.html_text + "\n\n✅ <b>Qabul qilindi!</b>", parse_mode="HTML")
     
     user_kb = InlineKeyboardBuilder()
-    # O'ZGARISH 2: Username o'rniga to'g'ridan-to'g'ri sizning ID raqamingiz orqali lichkangizga o'tadigan qilindi.
     user_kb.button(text="👨‍💻 Operatorga murojaat", url=f"tg://user?id={ADMIN_ID}")
     
     try:
-        msg_text = (
-            "✅ <b>Tabriklaymiz!</b> Sizning sovg'a so'rovingiz admin tomonidan tasdiqlandi va amalga oshirildi!\n\n"
-            "⚠️ <i>Agar Stars kelmagan bo'lsa, operatorga murojaat qiling.</i>"
-        )
+        msg_text = "✅ <b>Tabriklaymiz!</b> Sizning sovg'a so'rovingiz admin tomonidan tasdiqlandi va amalga oshirildi!\n\n⚠️ <i>Agar Stars kelmagan bo'lsa, operatorga murojaat qiling.</i>"
         await bot.send_message(int(uid), msg_text, parse_mode="HTML", reply_markup=user_kb.as_markup())
     except: pass
 
@@ -357,14 +452,16 @@ async def accept_w(callback: types.CallbackQuery):
 async def reject_w(callback: types.CallbackQuery):
     _, _, uid, price = callback.data.split("_")
     uid, price = int(uid), int(price)
-    if uid in users_db: users_db[uid]["stars"] += price
+    if uid in users_db: 
+        users_db[uid]["stars"] += price
+        save_data() # Pul qaytarildi, saqlash
     await callback.message.edit_text(callback.message.html_text + "\n\n❌ <b>Rad etildi!</b>", parse_mode="HTML")
     try:
         await bot.send_message(uid, "❌ Sovg'a so'rovingiz rad etildi. Stars balansingizga qaytarildi.")
     except: pass
 
 # =====================================================================
-# 10. MUKAMMAL ADMIN PANEL
+# 11. MUKAMMAL ADMIN PANEL (MAJBUR OBU VA REF QO'SHILDI)
 # =====================================================================
 @dp.message(F.text == "⚙️ Admin Panel")
 async def admin_panel(message: types.Message):
@@ -376,11 +473,61 @@ async def admin_panel(message: types.Message):
     kb.button(text="🗑 Sovg'a", callback_data="adm_del_gift")
     kb.button(text="🎟 Promo", callback_data="adm_add_promo")
     kb.button(text="🔗 Ref Narx", callback_data="adm_edit_ref")
-    kb.button(text="🎮 O'yin Narxi", callback_data="adm_edit_game") # Yangi tugma qoshildi
+    kb.button(text="🎮 O'yin Narxi", callback_data="adm_edit_game") 
     kb.button(text="💰 Balans", callback_data="adm_edit_bal")
+    kb.button(text="📢 Majburiy Obuna", callback_data="adm_mand_sub") # Yangi
+    kb.button(text="👥 Referallar", callback_data="adm_ref_stats") # Yangi
     kb.button(text="📊 Statistika", callback_data="adm_get_stats")
-    kb.adjust(2)
+    kb.adjust(2, 2, 2, 2, 2, 1)
     await message.answer("👨‍💻 <b>Admin Boshqaruv Paneliga xush kelibsiz!</b>", parse_mode="HTML", reply_markup=kb.as_markup())
+
+# --- YANGI: REFERAL STATISTIKASI ---
+@dp.callback_query(F.data == "adm_ref_stats")
+async def a_ref_stats(callback: types.CallbackQuery):
+    sorted_users = sorted(users_db.items(), key=lambda x: x[1].get('refs', 0), reverse=True)
+    txt = "👥 <b>Foydalanuvchilarning referal statistikasi (Top 20):</b>\n\n"
+    has_refs = False
+    for uid, udata in sorted_users[:20]:
+        if udata.get('refs', 0) > 0:
+            txt += f"👤 {udata['name']} (<code>{uid}</code>) - {udata.get('refs', 0)} ta\n"
+            has_refs = True
+            
+    if not has_refs:
+        txt += "Hali hech kim referal taklif qilmadi."
+        
+    await callback.message.answer(txt, parse_mode="HTML")
+    await callback.answer()
+
+# --- YANGI: MAJBURIY OBUNA ---
+@dp.callback_query(F.data == "adm_mand_sub")
+async def a_mand1(callback: types.CallbackQuery, state: FSMContext):
+    kb = InlineKeyboardBuilder()
+    kb.button(text="❌ O'chirish (Yo'q qilish)", callback_data="disable_mand_sub")
+    current = settings_db.get('mand_channel', "Yo'q")
+    await callback.message.answer(
+        f"Hozirgi majburiy obuna kanali: <b>{current}</b>\n\n"
+        f"Yangi kanalni username bilan yuboring (masalan: @mening_kanalim).\n"
+        f"Yoki majburiy obunani olib tashlash uchun pastdagi tugmani bosing:", 
+        parse_mode="HTML", reply_markup=kb.as_markup()
+    )
+    await state.set_state(AdminState.waiting_for_mand_channel)
+    
+@dp.callback_query(F.data == "disable_mand_sub")
+async def a_mand_disable(callback: types.CallbackQuery, state: FSMContext):
+    settings_db["mand_channel"] = None
+    save_data()
+    await callback.message.edit_text("✅ Majburiy obuna o'chirildi! Endi bot hech qanday kanal so'ramaydi.")
+    await state.clear()
+    
+@dp.message(AdminState.waiting_for_mand_channel)
+async def a_mand2(message: types.Message, state: FSMContext):
+    channel = message.text.strip()
+    if not channel.startswith("@"):
+        channel = "@" + channel
+    settings_db["mand_channel"] = channel
+    save_data()
+    await message.answer(f"✅ Majburiy obuna {channel} kanaliga o'rnatildi!\n⚠️ Eslatma: Bot ushbu kanalda admin bo'lishi shart, aks holda obunani tekshira olmaydi.")
+    await state.clear()
 
 @dp.callback_query(F.data == "adm_get_stats")
 async def a_stats(callback: types.CallbackQuery):
@@ -395,10 +542,10 @@ async def a_ref1(callback: types.CallbackQuery, state: FSMContext):
 async def a_ref2(message: types.Message, state: FSMContext):
     if message.text.isdigit():
         settings_db["ref_reward"] = int(message.text)
+        save_data()
         await message.answer(f"✅ Ref narxi o'zgardi: {message.text} ⭐")
     await state.clear()
 
-# --- YANGI O'YIN NARXI FUNKSIYALARI ---
 @dp.callback_query(F.data == "adm_edit_game")
 async def a_game1(callback: types.CallbackQuery, state: FSMContext):
     current_reward = settings_db.get("game_reward", 1)
@@ -409,9 +556,9 @@ async def a_game1(callback: types.CallbackQuery, state: FSMContext):
 async def a_game2(message: types.Message, state: FSMContext):
     if message.text.isdigit():
         settings_db["game_reward"] = int(message.text)
+        save_data()
         await message.answer(f"✅ O'yin yutuq narxi o'zgardi: {message.text} ⭐")
     await state.clear()
-# --------------------------------------
 
 # --- VAZIFA ---
 @dp.callback_query(F.data == "adm_add_task")
@@ -444,6 +591,7 @@ async def a_task5(message: types.Message, state: FSMContext):
     if message.text.isdigit():
         d = await state.get_data()
         tasks_db[str(len(tasks_db) + 1)] = {"photo": d['p'], "desc": d['d'], "url": d['u'], "chat_id": d['c'], "reward": int(message.text)}
+        save_data()
         await message.answer("✅ Vazifa muvaffaqiyatli qo'shildi!")
     await state.clear()
 
@@ -457,6 +605,7 @@ async def a_deltask_list(callback: types.CallbackQuery):
 @dp.callback_query(F.data.startswith("del_t_"))
 async def a_deltask_action(callback: types.CallbackQuery):
     tasks_db.pop(callback.data.split("_")[2], None)
+    save_data()
     await callback.message.edit_text("✅ O'chirildi!")
 
 # --- SOVG'A ---
@@ -476,6 +625,7 @@ async def a_gift3(message: types.Message, state: FSMContext):
     if message.text.isdigit():
         d = await state.get_data()
         gifts_db[str(len(gifts_db) + 1)] = {"name": d['n'], "price": int(message.text)}
+        save_data()
         await message.answer("✅ Qo'shildi!")
     await state.clear()
 
@@ -489,14 +639,10 @@ async def a_delgift_list(callback: types.CallbackQuery):
 @dp.callback_query(F.data.startswith("del_g_"))
 async def a_delgift_action(callback: types.CallbackQuery):
     gifts_db.pop(callback.data.split("_")[2], None)
+    save_data()
     await callback.message.edit_text("✅ O'chirildi!")
 
 # --- PROMOKOD ---
-@dp.callback_query(F.data == "adm_add_promo")
-async def a_promo1(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.answer("1/3: Promo matni:")
-    await state.set_state(AdminState.waiting_for_promo_code)
-
 @dp.callback_query(F.data == "adm_add_promo")
 async def a_promo1(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.answer("1/3: Promo matni:")
@@ -518,6 +664,7 @@ async def a_promo3(message: types.Message, state: FSMContext):
 async def a_promo4(message: types.Message, state: FSMContext):
     d = await state.get_data()
     promocodes_db[d['c']] = {"reward": d['r'], "limit": int(message.text)}
+    save_data()
     await message.answer("✅ Promokod faollashdi!")
     await state.clear()
 
@@ -542,15 +689,17 @@ async def a_bal3(message: types.Message, state: FSMContext):
     try:
         d = await state.get_data()
         users_db[d['i']]['stars'] = max(0, users_db[d['i']]['stars'] + int(message.text))
+        save_data()
         await message.answer(f"✅ Balans tahrirlandi! Hozirgi: {users_db[d['i']]['stars']} ⭐")
     except:
         pass
     await state.clear()
 
 # =====================================================================
-# 11. ISHGA TUSHIRISH (ASYNC)
+# 12. ISHGA TUSHIRISH (ASYNC)
 # =====================================================================
 async def main():
+    load_data() # BAZANI YUKLASH
     Thread(target=start_flask, daemon=True).start()
     logging.info("Bot tizimi ishga tushirildi...")
     await dp.start_polling(bot)
