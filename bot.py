@@ -19,7 +19,7 @@ from aiogram.fsm.context import FSMContext
 # =====================================================================
 # 2. ASOSIY SOZLAMALAR VA BAZA (JSON)
 # =====================================================================
-BOT_TOKEN = "8897921742:AAESAkH-sCZB_TairPZDK3B_3_KiGKavDYU"
+BOT_TOKEN = "8788707258:AAGHyfOlDFjJm8rspkasEVTyliQNtDZ339w"
 ADMIN_ID = 8086545587
 PORT = int(os.environ.get("PORT", 10000))
 DATA_FILE = "bot_data.json"
